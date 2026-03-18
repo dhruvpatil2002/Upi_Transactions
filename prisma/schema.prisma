@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum TransactionType {
+  SEND
+  RECEIVE_REQUEST
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  phone        String   @unique
+  passwordHash String
+  name         String
+  email        String?  @unique
+  refreshToken String?  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  accounts     BankAccount[]
+
+  @@map("users")
+  @@index([phone(sort: Desc)])
+}
+
+model BankAccount {
+  id                Int           @id @default(autoincrement())
+  userId            Int
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  upiId             String        @unique
+  balance           Decimal       @default(0) @db.Decimal(12, 2)
+  pinHash           String
+  isActive          Boolean       @default(true)
+  isFrozen          Boolean       @default(false)
+  frozenUntil       DateTime?
+  failedPinAttempts Int           @default(0)
+  lastPinAttempt    DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  sentTransactions     Transaction[] @relation("FromAccountTransactions")
+  receivedTransactions Transaction[] @relation("ToAccountTransactions")
+
+  @@map("bank_accounts")
+  @@index([userId])
+  @@index([isActive, isFrozen])
+}
+
+model Transaction {
+  id            Int               @id @default(autoincrement())  
+  fromAccountId Int               
+  toAccountId   Int               
+  amount        Decimal           @db.Decimal(12, 2)
+  utr           String            @unique
+  description   String?
+  status        TransactionStatus @default(PENDING)
+  type          TransactionType   @default(SEND)
+  pinVerified   Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  
+
+  fromAccount BankAccount @relation("FromAccountTransactions", fields: [fromAccountId], references: [id])
+  toAccount   BankAccount @relation("ToAccountTransactions", fields: [toAccountId], references: [id])
+
+  @@map("transactions")
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+ 
