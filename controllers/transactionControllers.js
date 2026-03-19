@@ -261,10 +261,119 @@ const createPaymentRequest = (prisma) => async (req, res) => {
   }
 };
 
+const acceptPaymentRequest = (prisma) => async (req, res) => {
+  const { utr } = req.params;
+  const { pin } = req.body;
+
+  try {
+    // 1. Find the pending request
+    const transaction = await prisma.transaction.findUnique({
+      where: { utr },
+      include: {
+        fromAccount: true,
+        toAccount: true,
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: "Payment request not found" });
+    }
+
+    if (transaction.status !== "PENDING") {
+      return res.status(400).json({ error: "Request already processed" });
+    }
+
+    // 2. Confirm logged in user is the payer
+    if (transaction.fromAccount.userId !== req.user.id) {
+      return res.status(403).json({ error: "Not authorized to accept this request" });
+    }
+
+    // 3. Check account not frozen
+    await checkPinAttempts(req, prisma);
+    const fromAccount = req.userAccount;
+
+    // 4. Check balance
+    if (fromAccount.balance < transaction.amount) {
+      return res.status(400).json({ error: "Insufficient balance" });
+    }
+
+    // 5. Verify PIN
+    const pinValid = await verifyPin(prisma, fromAccount.id, pin);
+    if (!pinValid) {
+      const updated = await prisma.bankAccount.update({
+        where: { id: fromAccount.id },
+        data: {
+          failedPinAttempts: { increment: 1 },
+          lastPinAttempt: new Date(),
+        },
+      });
+
+      if (updated.failedPinAttempts >= 3) {
+        await prisma.bankAccount.update({
+          where: { id: fromAccount.id },
+          data: {
+            isFrozen: true,
+            frozenUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        });
+        return res.status(423).json({ error: "Account frozen for 24 hours" });
+      }
+
+      return res.status(401).json({
+        error: "Invalid PIN",
+        attemptsLeft: 3 - updated.failedPinAttempts,
+      });
+    }
+
+    // 6. Reset failed attempts
+    await prisma.bankAccount.update({
+      where: { id: fromAccount.id },
+      data: { failedPinAttempts: 0 },
+    });
+
+    // 7. Process atomically
+    await prisma.$transaction(async (tx) => {
+      await tx.bankAccount.update({
+        where: { id: transaction.fromAccountId },
+        data: { balance: { decrement: transaction.amount } },
+      });
+
+      await tx.bankAccount.update({
+        where: { id: transaction.toAccountId },
+        data: { balance: { increment: transaction.amount } },
+      });
+
+      await tx.transaction.update({
+        where: { utr },
+        data: {
+          status: "SUCCESS",
+          pinVerified: true,
+        },
+      });
+    });
+
+    return res.json({
+      success: true,
+      message: "Payment request accepted",
+      utr,
+      amount: transaction.amount,
+      status: "SUCCESS",
+      timestamp: new Date().toISOString(),
+    });
+
+  } catch (error) {
+    console.error("Accept request error:", error);
+    return res.status(error.status || 500).json({ 
+      error: error.message || "Internal server error" 
+    });
+  }
+};
+
 module.exports = {
   createSendTransaction,
   checkTransactionStatus,
   getTransactionHistory,
   getBalance,
   createPaymentRequest,
+  acceptPaymentRequest,
 };

@@ -1,19 +1,30 @@
 const express = require("express");
-const { validateSendTransaction, validatePaymentRequest, validateTransactionStatus } = require("../middleware/transactionValidation.js");
+const { 
+  validateSendTransaction, 
+  validatePaymentRequest, 
+  validateTransactionStatus 
+} = require("../middleware/userValidation");
 const { authenticateToken } = require("../middleware/authMiddleware.js");
 const { transactionLimiter, balanceLimiter, sendLimiter } = require("../middleware/rateLimiter.js");
-const { createSendTransaction, checkTransactionStatus, getTransactionHistory, getBalance, createPaymentRequest } = require("../controllers/transactionControllers.js");
+const { 
+  createSendTransaction, 
+  checkTransactionStatus, 
+  getTransactionHistory, 
+  getBalance, 
+  createPaymentRequest,
+  acceptPaymentRequest, 
+} = require("../controllers/transactionControllers.js");
 
 const createTransactionRoutes = (prisma) => {
   const router = express.Router();
 
   router.post("/send",
-  authenticateToken,
-  validateSendTransaction,
-  sendLimiter,
-  transactionLimiter,
-  (req, res) => createSendTransaction(prisma)(req, res)
-);
+    authenticateToken,
+    validateSendTransaction,
+    sendLimiter,
+    transactionLimiter,
+    (req, res) => createSendTransaction(prisma)(req, res)
+  );
 
   router.get("/balance",
     authenticateToken,
@@ -37,6 +48,12 @@ const createTransactionRoutes = (prisma) => {
     validatePaymentRequest,
     transactionLimiter,
     createPaymentRequest(prisma)
+  );
+
+  router.post("/accept/:utr",       
+    authenticateToken,
+    transactionLimiter,
+    (req, res) => acceptPaymentRequest(prisma)(req, res)
   );
 
   return router;

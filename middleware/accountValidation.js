@@ -1,4 +1,4 @@
-const { z, ZodError } = require('zod');
+const { z } = require('zod');
 
 const createAccountSchema = z.object({
   upiId: z
@@ -17,21 +17,38 @@ const createAccountSchema = z.object({
     .optional(),
 });
 
+// ✅ CRASH-PROOF VERSION - Line 28 FIXED
 const validateZod = (schema) => (req, res, next) => {
   try {
-    req.body = schema.parse(req.body);
-    next();
-  } catch (err) {
-    if (err instanceof ZodError) {
+    // SAFETY CHECK: req.body exists
+    if (!req.body) {
       return res.status(400).json({
         error: 'Validation failed',
-        details: err.errors.map((e) => ({
-          msg: e.message,
-          path: e.path.join('.'),
-        })),
+        details: [{ msg: 'Request body required', path: '' }]
       });
     }
-    next(err);
+
+    // USE safeParse INSTEAD OF parse
+    const result = schema.safeParse(req.body);
+    
+    if (!result.success) {
+      // SAFE MAP - won't crash if errors is undefined
+      const details = (result.error?.errors || []).map((e) => ({
+        msg: e.message || 'Validation error',
+        path: Array.isArray(e.path) ? e.path.join('.') : '',
+      }));
+      
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: details.length > 0 ? details : [{ msg: 'Unknown validation error' }]
+      });
+    }
+
+    req.body = result.data;
+    next();
+  } catch (err) {
+    console.error('Account validation crash:', err);
+    return res.status(500).json({ error: 'Server error' });
   }
 };
 
